@@ -9,4 +9,7 @@ public interface IKubernetesService
     Task<PodInfo> CreatePodAsync(CreatePodRequest request);
     Task DeletePodAsync(string name);
     Task<string> GetPodLogsAsync(string name, int tailLines = 100);
+    Task<UploadResponse> UploadFileAsync(string podName, string? directoryPath, string fileName, byte[] content, CancellationToken cancellationToken = default);
+    Task<(byte[] Content, string FileName)> DownloadFileAsync(string podName, string filePath, CancellationToken cancellationToken = default);
+    Task<List<Models.FileInfo>> ListFilesAsync(string podName, string? directoryPath, CancellationToken cancellationToken = default);
 }

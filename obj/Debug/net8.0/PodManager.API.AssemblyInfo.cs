@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("PodManager.API")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+94227072019cbba189310bce2e80a1cda36ad560")]
 [assembly: System.Reflection.AssemblyProductAttribute("PodManager.API")]
 [assembly: System.Reflection.AssemblyTitleAttribute("PodManager.API")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

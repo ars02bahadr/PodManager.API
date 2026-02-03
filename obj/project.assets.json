@@ -1,7 +1,7 @@
 {
   "version": 3,
   "targets": {
-    "net9.0": {
+    "net8.0": {
       "Fractions/7.3.0": {
         "type": "package",
         "compile": {
@@ -22,12 +22,12 @@
           "YamlDotNet": "16.3.0"
         },
         "compile": {
-          "lib/net9.0/KubernetesClient.dll": {
+          "lib/net8.0/KubernetesClient.dll": {
             "related": ".pdb;.xml"
           }
         },
         "runtime": {
-          "lib/net9.0/KubernetesClient.dll": {
+          "lib/net8.0/KubernetesClient.dll": {
             "related": ".pdb;.xml"
           }
         }
@@ -2048,7 +2048,7 @@
     }
   },
   "projectFileDependencyGroups": {
-    "net9.0": [
+    "net8.0": [
       "KubernetesClient >= 18.0.13",
       "Microsoft.AspNetCore.OpenApi >= 8.0.19",
       "Microsoft.AspNetCore.SignalR >= 1.2.9",
@@ -2071,14 +2071,14 @@
         "/Users/admin/.nuget/NuGet/NuGet.Config"
       ],
       "originalTargetFrameworks": [
-        "net9.0"
+        "net8.0"
       ],
       "sources": {
         "https://api.nuget.org/v3/index.json": {}
       },
       "frameworks": {
-        "net9.0": {
-          "targetAlias": "net9.0",
+        "net8.0": {
+          "targetAlias": "net8.0",
           "projectReferences": {}
         }
       },
@@ -2086,17 +2086,11 @@
         "warnAsError": [
           "NU1605"
         ]
-      },
-      "restoreAuditProperties": {
-        "enableAudit": "true",
-        "auditLevel": "low",
-        "auditMode": "direct"
-      },
-      "SdkAnalysisLevel": "9.0.300"
+      }
     },
     "frameworks": {
-      "net9.0": {
-        "targetAlias": "net9.0",
+      "net8.0": {
+        "targetAlias": "net8.0",
         "dependencies": {
           "KubernetesClient": {
             "target": "Package",
@@ -2134,7 +2128,7 @@
             "privateAssets": "all"
           }
         },
-        "runtimeIdentifierGraphPath": "/usr/local/share/dotnet/sdk/9.0.305/PortableRuntimeIdentifierGraph.json"
+        "runtimeIdentifierGraphPath": "/opt/homebrew/Cellar/dotnet@8/8.0.119/libexec/sdk/8.0.119/PortableRuntimeIdentifierGraph.json"
       }
     }
   }

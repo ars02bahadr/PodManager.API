@@ -1,6 +1,7 @@
 using k8s;
 using k8s.Models;
 using PodManager.API.Models;
+using System.Text;
 
 namespace PodManager.API.Services;
 
@@ -8,6 +9,8 @@ namespace PodManager.API.Services;
     {
         private readonly IKubernetes _client;
         private const string Namespace = "default";
+        private const string DefaultWorkdir = "/";
+        private const string ContainerName = "main";
 
         public KubernetesService()
         {
@@ -64,6 +67,56 @@ namespace PodManager.API.Services;
             {
                 return $"Error fetching logs: {ex.Message}";
             }
+        }
+
+        public async Task<UploadResponse> UploadFileAsync(string podName, string? directoryPath, string fileName, byte[] content, CancellationToken cancellationToken = default)
+        {
+            var safeDir = NormalizeDirectoryPath(directoryPath, DefaultWorkdir);
+            var safeFileName = Path.GetFileName(fileName);
+            if (string.IsNullOrWhiteSpace(safeFileName))
+            {
+                return new UploadResponse { Success = false, Error = "Geçersiz dosya adı." };
+            }
+
+            var targetPath = CombineUnixPath(safeDir, safeFileName);
+            var base64 = Convert.ToBase64String(content);
+            var command = new[] { "/bin/sh", "-c", $"base64 -d > {EscapeShellArg(targetPath)}" };
+
+            var result = await ExecWithStdinAsync(podName, command, base64, cancellationToken);
+            if (!string.IsNullOrWhiteSpace(result.stderr))
+            {
+                return new UploadResponse { Success = false, Error = result.stderr.Trim() };
+            }
+
+            return new UploadResponse { Success = true, FilePath = targetPath };
+        }
+
+        public async Task<(byte[] Content, string FileName)> DownloadFileAsync(string podName, string filePath, CancellationToken cancellationToken = default)
+        {
+            var safePath = NormalizeFilePath(filePath);
+            var command = new[] { "/bin/sh", "-c", $"base64 {EscapeShellArg(safePath)}" };
+            var result = await ExecAsync(podName, command, cancellationToken);
+            if (!string.IsNullOrWhiteSpace(result.stderr))
+            {
+                throw new InvalidOperationException(result.stderr.Trim());
+            }
+
+            var content = Convert.FromBase64String(result.stdout);
+            var fileName = Path.GetFileName(safePath);
+            return (content, fileName);
+        }
+
+        public async Task<List<Models.FileInfo>> ListFilesAsync(string podName, string? directoryPath, CancellationToken cancellationToken = default)
+        {
+            var safeDir = NormalizeDirectoryPath(directoryPath, DefaultWorkdir);
+            var command = new[] { "/bin/sh", "-c", $"LC_ALL=C ls -la --time-style=long-iso {EscapeShellArg(safeDir)}" };
+            var result = await ExecAsync(podName, command, cancellationToken);
+            if (!string.IsNullOrWhiteSpace(result.stderr))
+            {
+                throw new InvalidOperationException(result.stderr.Trim());
+            }
+
+            return ParseLsOutput(result.stdout);
         }
 
         public async Task<PodInfo> CreatePodAsync(CreatePodRequest request)
@@ -257,4 +310,185 @@ namespace PodManager.API.Services;
     // Default - bilinmeyen image
     return (imageKey, new List<string> { "/bin/bash", "-c", "sleep infinity" }, null, 8888);
 }
+
+        private async Task<(string stdout, string stderr)> ExecAsync(string podName, string[] command, CancellationToken cancellationToken)
+        {
+            var webSocket = await _client.WebSocketNamespacedPodExecAsync(
+                podName,
+                Namespace,
+                container: ContainerName,
+                command: command,
+                tty: false,
+                stdin: false,
+                stdout: true,
+                stderr: true,
+                cancellationToken: cancellationToken
+            );
+
+            using var demux = new StreamDemuxer(webSocket);
+            demux.Start();
+
+            using var stdout = demux.GetStream(ChannelIndex.StdOut, ChannelIndex.StdOut);
+            using var stderr = demux.GetStream(ChannelIndex.StdErr, ChannelIndex.StdErr);
+
+            var stdoutText = await ReadStreamAsync(stdout, cancellationToken);
+            var stderrText = await ReadStreamAsync(stderr, cancellationToken);
+            return (stdoutText, stderrText);
+        }
+
+        private async Task<(string stdout, string stderr)> ExecWithStdinAsync(string podName, string[] command, string stdinPayload, CancellationToken cancellationToken)
+        {
+            var webSocket = await _client.WebSocketNamespacedPodExecAsync(
+                podName,
+                Namespace,
+                container: ContainerName,
+                command: command,
+                tty: false,
+                stdin: true,
+                stdout: true,
+                stderr: true,
+                cancellationToken: cancellationToken
+            );
+
+            using var demux = new StreamDemuxer(webSocket);
+            demux.Start();
+
+            using var stdin = demux.GetStream(ChannelIndex.StdIn, ChannelIndex.StdIn);
+            using var stdout = demux.GetStream(ChannelIndex.StdOut, ChannelIndex.StdOut);
+            using var stderr = demux.GetStream(ChannelIndex.StdErr, ChannelIndex.StdErr);
+
+            await WriteStreamAsync(stdin, stdinPayload, cancellationToken);
+
+            var stdoutText = await ReadStreamWithTimeoutAsync(stdout, TimeSpan.FromSeconds(2), cancellationToken);
+            var stderrText = await ReadStreamWithTimeoutAsync(stderr, TimeSpan.FromSeconds(2), cancellationToken);
+            return (stdoutText, stderrText);
+        }
+
+        private static async Task<string> ReadStreamAsync(Stream stream, CancellationToken cancellationToken)
+        {
+            using var reader = new StreamReader(stream, Encoding.UTF8);
+            return await reader.ReadToEndAsync(cancellationToken);
+        }
+
+        private static async Task<string> ReadStreamWithTimeoutAsync(Stream stream, TimeSpan timeout, CancellationToken cancellationToken)
+        {
+            using var reader = new StreamReader(stream, Encoding.UTF8);
+            var readTask = reader.ReadToEndAsync(cancellationToken);
+            var delayTask = Task.Delay(timeout, cancellationToken);
+            var completed = await Task.WhenAny(readTask, delayTask);
+            if (completed == readTask)
+            {
+                return await readTask;
+            }
+            return string.Empty;
+        }
+
+        private static async Task WriteStreamAsync(Stream stream, string payload, CancellationToken cancellationToken)
+        {
+            var bytes = Encoding.UTF8.GetBytes(payload);
+            await stream.WriteAsync(bytes.AsMemory(0, bytes.Length), cancellationToken);
+            await stream.FlushAsync(cancellationToken);
+            stream.Close();
+        }
+
+        private static string NormalizeDirectoryPath(string? path, string defaultPath)
+        {
+            var trimmed = string.IsNullOrWhiteSpace(path) ? defaultPath : path.Trim();
+            if (!trimmed.StartsWith("/"))
+            {
+                throw new ArgumentException("Klasör yolu mutlak olmalı.");
+            }
+            if (trimmed.Contains("..", StringComparison.Ordinal))
+            {
+                throw new ArgumentException("Geçersiz klasör yolu.");
+            }
+            if (!trimmed.EndsWith("/"))
+            {
+                trimmed += "/";
+            }
+            return trimmed;
+        }
+
+        private static string NormalizeFilePath(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                throw new ArgumentException("Dosya yolu zorunludur.");
+            }
+            var trimmed = path.Trim();
+            if (!trimmed.StartsWith("/"))
+            {
+                throw new ArgumentException("Dosya yolu mutlak olmalı.");
+            }
+            if (trimmed.Contains("..", StringComparison.Ordinal))
+            {
+                throw new ArgumentException("Geçersiz dosya yolu.");
+            }
+            return trimmed;
+        }
+
+        private static string CombineUnixPath(string directoryPath, string fileName)
+        {
+            var dir = directoryPath.EndsWith("/") ? directoryPath : directoryPath + "/";
+            return $"{dir}{fileName}";
+        }
+
+        private static string EscapeShellArg(string value)
+        {
+            return "'" + value.Replace("'", "'\"'\"'") + "'";
+        }
+
+        private static List<Models.FileInfo> ParseLsOutput(string output)
+        {
+            var results = new List<Models.FileInfo>();
+            var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+
+            foreach (var line in lines)
+            {
+                if (line.StartsWith("total ", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length < 8)
+                {
+                    continue;
+                }
+
+                var mode = parts[0];
+                var sizePart = parts[4];
+                var datePart = parts[5];
+                var timePart = parts[6];
+                var name = string.Join(' ', parts.Skip(7));
+                if (name == "." || name == "..")
+                {
+                    continue;
+                }
+
+                if (name.Contains(" -> ", StringComparison.Ordinal))
+                {
+                    name = name.Split(" -> ", 2, StringSplitOptions.None)[0];
+                }
+
+                var isDirectory = mode.StartsWith("d", StringComparison.Ordinal);
+                var size = long.TryParse(sizePart, out var parsedSize) ? parsedSize : 0;
+                var timestamp = $"{datePart} {timePart}";
+                DateTime? modifiedAt = null;
+                if (DateTime.TryParse(timestamp, out var parsedDate))
+                {
+                    modifiedAt = parsedDate;
+                }
+
+                results.Add(new Models.FileInfo
+                {
+                    Name = name,
+                    Size = size,
+                    IsDirectory = isDirectory,
+                    ModifiedAt = modifiedAt
+                });
+            }
+
+            return results;
+        }
     }
